@@ -1,0 +1,74 @@
+# Unsigned iOS IPA for sideloading (Sideloadly / AltStore re-sign with your Apple ID)
+name: iOS IPA
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'SOCKS/**'
+      - 'SocksBypass.xcodeproj/**'
+      - '.github/workflows/ios-ipa.yml'
+
+concurrency:
+  group: ios-ipa-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+
+jobs:
+  ipa:
+    name: Build unsigned IPA
+    runs-on: macos-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Xcode version
+        run: xcodebuild -version
+
+      - name: Build app (Release, iphoneos, no signing)
+        run: |
+          set -euo pipefail
+          xcodebuild \
+            -project SocksBypass.xcodeproj \
+            -target SocksBypass \
+            -configuration Release \
+            -sdk iphoneos \
+            SYMROOT="$PWD/build" \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            DEVELOPMENT_TEAM="" \
+            build
+
+      - name: Package IPA
+        run: |
+          set -euo pipefail
+          APP="build/Release-iphoneos/SocksBypass.app"
+          test -d "$APP"
+          mkdir -p Payload
+          cp -R "$APP" Payload/
+          zip -qry SocksBypass-unsigned.ipa Payload
+          ls -lh SocksBypass-unsigned.ipa
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: SocksBypass-unsigned-ipa
+          path: SocksBypass-unsigned.ipa
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Publish to "ios-latest" release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          gh release delete ios-latest --yes --cleanup-tag || true
+          gh release create ios-latest SocksBypass-unsigned.ipa \
+            --title "iOS (unsigned IPA)" \
+            --notes "Imzasiz IPA. Sideloadly ile kendi Apple ID'nizle imzalayip yukleyin. Commit: ${GITHUB_SHA}" \
+            --target "${GITHUB_SHA}"
